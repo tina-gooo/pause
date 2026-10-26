@@ -3,10 +3,92 @@ import SwiftUI
 import UIKit
 import CoreHaptics
 
+struct AmbientBackground: View {
+    @State private var animate = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.10, green: 0.12, blue: 0.22),
+                        Color(red: 0.16, green: 0.17, blue: 0.29),
+                        Color(red: 0.08, green: 0.10, blue: 0.18)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                Circle()
+                    .fill(Color(red: 0.48, green: 0.40, blue: 0.78)
+                        .opacity(0.55))
+                    .frame(width: 220, height: 220)
+                    .blur(radius: 65)
+                    .offset(
+                        x: animate ? -80 : 45,
+                        y: animate ? -150 : -60
+                    )
+
+                Circle()
+                    .fill(Color(red: 0.30, green: 0.60, blue: 0.72)
+                        .opacity(0.40))
+                    .frame(width: 190, height: 190)
+                    .blur(radius: 70)
+                    .offset(
+                        x: animate ? 100 : -70,
+                        y: animate ? 100 : 190
+                    )
+
+                Circle()
+                    .fill(Color(red: 0.65, green: 0.43, blue: 0.62)
+                        .opacity(0.35))
+                    .frame(width: 160, height: 160)
+                    .blur(radius: 65)
+                    .offset(
+                        x: animate ? -90 : 70,
+                        y: animate ? 240 : 100
+                    )
+            }
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(
+                    .easeInOut(duration: 12)
+                        .repeatForever(autoreverses: true)
+                ) {
+                    animate = true
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
+    }
+}
+
+
+struct TrackingEvent: Codable, Identifiable {
+    let id: UUID
+    let appID: String
+    let type: String
+    let timestamp: Date
+
+    init(appID: String, type: String) {
+        self.id = UUID()
+        self.appID = appID
+        self.type = type
+        self.timestamp = Date()
+    }
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var wasInBackground = false
     @AppStorage("pauseAttempts") private var savedAttempts = ""
+    @AppStorage("trackingEvents")
+    private var trackingEventsData = "[]"
     @AppStorage("skipNextInstagramTrigger")
     private var skipNextInstagramTrigger = false
 
@@ -17,6 +99,10 @@ struct ContentView: View {
     @State private var breathingTimer: Timer?
     @State private var declined = false
     @State private var haptics = HapticManager()
+    @State private var currentAppID = "instagram"
+    @State private var flowStarted = false
+    @State private var flowID = 0
+    @State private var currentPrompt = PausePrompts.random()
     
     private let pauseColors: [Color] = [
         Color(red: 184/255, green: 121/255, blue: 121/255), // Dusty Rose
@@ -30,54 +116,101 @@ struct ContentView: View {
     
     private let breathDuration: Double = 4
 
-    private func startFlow() {
-        guard !panelVisible else { return }
+    
+    private func startFlow(appID: String? = nil) {
+        flowID += 1
+        let thisFlowID = flowID
+        currentPrompt = PausePrompts.random()
+
+        if let appID {
+            currentAppID = appID
+        }
+
+        flowStarted = true
+
+        // Start with a clean visual state.
+        panelVisible = false
+        contentVisible = false
+        buttonsVisible = false
+        breathingIn = false
+        declined = false
+
         pauseColor = pauseColors.randomElement() ?? pauseColors[0]
         haptics.playBoiling()
-        recordAttempt()
+        recordAttempt(appID: currentAppID)
 
-        guard !panelVisible else { return }
-        
-        haptics.playBoiling()
-        
-        recordAttempt()
-        
-        // Wait 2 seconds before showing the panel.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard flowID == thisFlowID else { return }
+
             withAnimation(.easeInOut(duration: breathDuration)) {
                 panelVisible = true
             }
-            
+
             haptics.stop()
             haptics.playRamp()
-            
             UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-            
-            // Reveal content after the 3-second slide finishes.
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard flowID == thisFlowID else { return }
+
                 withAnimation(.easeOut(duration: 0.5)) {
                     contentVisible = true
                 }
-                
+
                 startBreathing()
-                
+
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    guard flowID == thisFlowID else { return }
+
                     withAnimation(.easeOut(duration: 0.35)) {
                         buttonsVisible = true
                     }
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+                    UIImpactFeedbackGenerator(style: .medium)
+                        .impactOccurred()
                 }
             }
         }
+    }
+
     
+    private func logEvent(
+        _ type: String,
+        appID: String = "instagram"
+    ) {
+        let data = Data(trackingEventsData.utf8)
+
+        var events =
+            (try? JSONDecoder().decode(
+                [TrackingEvent].self,
+                from: data
+            )) ?? []
+
+        events.append(
+            TrackingEvent(appID: appID, type: type)
+        )
+
+        if let encoded = try? JSONEncoder().encode(events),
+           let json = String(data: encoded, encoding: .utf8) {
+            trackingEventsData = json
+        }
     }
     
     private var recentCount: Int {
-        let now = Date().timeIntervalSince1970
-        return savedAttempts.split(separator: ",")
-            .compactMap { Double($0) }
-            .filter { now - $0 < 86400 }
-            .count
+        let now = Date()
+
+        let data = Data(trackingEventsData.utf8)
+        let events = (try? JSONDecoder().decode(
+            [TrackingEvent].self,
+            from: data
+        )) ?? []
+
+        return events.filter { event in
+            event.appID == currentAppID &&
+            event.type == "attempt" &&
+            now.timeIntervalSince(event.timestamp) < 86400 &&
+            event.timestamp <= now
+        }.count
     }
     
     private func rampHaptics(step: Int = 0) {
@@ -107,14 +240,18 @@ struct ContentView: View {
                 // Dimmed background
                 Color(red: 0.12, green: 0.12, blue: 0.14)
                     .ignoresSafeArea()
+                
+                AmbientBackground()
+                Text(currentPrompt)
+                    .font(.system(size: 23, weight: .regular, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(8)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 32)
+                    .shadow(color: .white.opacity(0.15), radius: 12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
 
-                // Background glow
-                Circle()
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: 180, height: 180)
-                    .scaleEffect(breathingIn ? 1.0 : 0.72)
-                    .animation(.easeInOut(duration: breathDuration), value: breathingIn)
-                    .frame(width: 220, height: 220)
                 
                 VStack {
                     Spacer()
@@ -124,7 +261,7 @@ struct ContentView: View {
                             // Header
                             HStack {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("ONE SEC")
+                                    Text("Pause")
                                         .font(.caption.weight(.bold))
                                         .tracking(3)
                                         .foregroundStyle(.white.opacity(0.7))
@@ -224,6 +361,7 @@ struct ContentView: View {
                                     VStack(spacing: 12) {
                                         Button {
                                             if !declined {
+                                                logEvent("declined", appID: currentAppID)
                                                 withAnimation(.spring(response: 0.45)) {
                                                     declined = true
                                                 }
@@ -243,9 +381,9 @@ struct ContentView: View {
                                         }
 
                                         Button {
-                                            continueToInstagram()
+                                            continueToApp()
                                         } label: {
-                                            Text("Continue to Instagram")
+                                            Text("Continue to \(currentAppID.capitalized)")
                                                 .font(.system(size: 16, weight: .medium))
                                                 .foregroundStyle(.white.opacity(0.85))
                                                 .frame(maxWidth: .infinity)
@@ -287,11 +425,31 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
-            startFlow()
+            // when user opens Pause directly
+        }
+        .onOpenURL { url in
+            guard
+                url.scheme == "pause",
+                url.host == "open"
+            else {
+                return
+            }
+
+            let components = URLComponents(
+                url: url,
+                resolvingAgainstBaseURL: false
+            )
+
+            let appID = components?.queryItems?
+                .first(where: { $0.name == "app" })?.value
+
+            flowStarted = false
+            startFlow(appID: appID)
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
                 wasInBackground = true
+                flowStarted = false
 
                 // Reset before iOS backgrounds the app.
                 haptics.stop()
@@ -312,13 +470,13 @@ struct ContentView: View {
 
             if newPhase == .active && wasInBackground {
                 wasInBackground = false
-                startFlow()
             }
         }
     }
 
-    private func recordAttempt() {
+    private func recordAttempt(appID: String) {
         let now = Date().timeIntervalSince1970
+
         let recent = savedAttempts.split(separator: ",")
             .compactMap { Double($0) }
             .filter { now - $0 < 86400 }
@@ -326,6 +484,8 @@ struct ContentView: View {
         savedAttempts = (recent + [now])
             .map { String($0) }
             .joined(separator: ",")
+
+        logEvent("attempt", appID: appID)
     }
 
     
@@ -345,13 +505,26 @@ struct ContentView: View {
     }
 
 
-    private func continueToInstagram() {
+    private func continueToApp() {
+        logEvent("continued", appID: currentAppID)
+
         UserDefaults.standard.set(
             Date().timeIntervalSince1970,
-            forKey: "instagramBypassTimestamp"
+            forKey: "\(currentAppID)BypassTimestamp"
         )
 
-        guard let url = URL(string: "instagram://") else { return }
+        let appURLString: String
+
+        switch currentAppID {
+        case "instagram":
+            appURLString = "instagram://"
+        case "brave":
+            appURLString = "brave://"
+        default:
+            return
+        }
+
+        guard let url = URL(string: appURLString) else { return }
         UIApplication.shared.open(url)
     }
 }
@@ -448,11 +621,11 @@ final class HapticManager {
             let intensityCurve = CHHapticParameterCurve(
                 parameterID: .hapticIntensityControl,
                 controlPoints: [
-                    .init(relativeTime: 0.0, value: 0.8),
-                    .init(relativeTime: 0.7, value: 0.85),
-                    .init(relativeTime: 1.4, value: 0.9),
-                    .init(relativeTime: 2.1, value: 0.95),
-                    .init(relativeTime: 3.0, value: 1.0)
+                    .init(relativeTime: 0.0, value: 0.1),
+                    .init(relativeTime: 0.7, value: 0.2),
+                    .init(relativeTime: 1.4, value: 0.3),
+                    .init(relativeTime: 2.1, value: 0.4),
+                    .init(relativeTime: 3.0, value: 0.5)
                 ],
                 relativeTime: 0
             )
@@ -463,7 +636,7 @@ final class HapticManager {
                     .init(relativeTime: 0.0, value: 0.1),
                     .init(relativeTime: 1.0, value: 0.25),
                     .init(relativeTime: 2.0, value: 0.55),
-                    .init(relativeTime: 3.0, value: 0.9)
+                    .init(relativeTime: 3.0, value: 0.7)
                 ],
                 relativeTime: 0
             )

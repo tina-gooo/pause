@@ -102,15 +102,16 @@ struct ContentView: View {
     @State private var currentAppID = "instagram"
     @State private var flowStarted = false
     @State private var flowID = 0
-    @State private var currentPrompt = PausePrompts.random()
+    @State private var currentPrompt = ""
+    @State private var showStats = false
     
     private let pauseColors: [Color] = [
-        Color(red: 184/255, green: 121/255, blue: 121/255), // Dusty Rose
-        Color(red: 141/255, green: 123/255, blue: 112/255), // Warm Taupe
-        Color(red: 133/255, green: 133/255, blue: 104/255), // Olive
-        Color(red: 130/255, green: 148/255, blue: 135/255), // Sage
-        Color(red: 120/255, green: 140/255, blue: 155/255), // Slate Blue
-        Color(red: 121/255, green: 103/255, blue: 125/255)  // Muted Plum
+        Color(red: 0.78, green: 0.34, blue: 0.42), // rose
+        Color(red: 0.72, green: 0.42, blue: 0.24), // clay
+        Color(red: 0.33, green: 0.55, blue: 0.40), // fern
+        Color(red: 0.20, green: 0.52, blue: 0.58), // lagoon
+        Color(red: 0.34, green: 0.40, blue: 0.75), // indigo
+        Color(red: 0.55, green: 0.35, blue: 0.67)  // orchid
     ]
     @State private var pauseColor: Color = Color(red: 184/255, green: 121/255, blue: 121/255)
     
@@ -158,6 +159,7 @@ struct ContentView: View {
                 }
 
                 startBreathing()
+                currentPrompt = ""
 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                     guard flowID == thisFlowID else { return }
@@ -197,8 +199,6 @@ struct ContentView: View {
     }
     
     private var recentCount: Int {
-        let now = Date()
-
         let data = Data(trackingEventsData.utf8)
         let events = (try? JSONDecoder().decode(
             [TrackingEvent].self,
@@ -208,8 +208,7 @@ struct ContentView: View {
         return events.filter { event in
             event.appID == currentAppID &&
             event.type == "attempt" &&
-            now.timeIntervalSince(event.timestamp) < 86400 &&
-            event.timestamp <= now
+            Calendar.current.isDateInToday(event.timestamp)
         }.count
     }
     
@@ -242,6 +241,17 @@ struct ContentView: View {
                     .ignoresSafeArea()
                 
                 AmbientBackground()
+                .overlay(alignment: .bottom) {
+                        Button {
+                            showStats = true
+                        } label: {
+                            Text("View activity")
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        .padding(.bottom, 60)
+                    }
+
                 Text(currentPrompt)
                     .font(.system(size: 23, weight: .regular, design: .rounded))
                     .multilineTextAlignment(.center)
@@ -251,170 +261,31 @@ struct ContentView: View {
                     .shadow(color: .white.opacity(0.15), radius: 12)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
+                
 
                 
                 VStack {
                     Spacer()
 
                     if panelVisible {
-                        VStack(spacing: 0) {
-                            // Header
-                            HStack {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Pause")
-                                        .font(.caption.weight(.bold))
-                                        .tracking(3)
-                                        .foregroundStyle(.white.opacity(0.7))
-
-                                    Text(declined
-                                         ? "Good choice."
-                                         : "Before you scroll.")
-                                        .font(.system(size: 29, weight: .bold))
-                                        .foregroundStyle(.white)
-                                }
-
-                                Spacer()
-
-                                Image(systemName: "pause.circle.fill")
-                                    .font(.system(size: 34))
-                                    .foregroundStyle(.white.opacity(0.85))
-                            }
-                            .padding(.top, 80)
-                            .padding(.horizontal, 26)
-
-                            Spacer(minLength: 20)
-
-                            if !declined {
-                                // Breathing guide
-                                VStack(spacing: 24) {
-                                    
-                                    ZStack {
-                                        Circle()
-                                            .fill(.white.opacity(0.08))
-                                            .frame(width: 280, height: 280)
-                                            .scaleEffect(breathingIn ? 1.0 : 0.79)
-
-                                        Circle()
-                                            .stroke(.white.opacity(0.18), lineWidth: 1)
-                                            .frame(width: 176, height: 176)
-                                            .scaleEffect(breathingIn ? 1.0 : 0.77)
-
-                                        Circle()
-                                            .fill(
-                                                RadialGradient(
-                                                    colors: [
-                                                        Color.white.opacity(0.95),
-                                                        Color(red: 1, green: 0.45, blue: 0.42)
-                                                    ],
-                                                    center: .topLeading,
-                                                    startRadius: 2,
-                                                    endRadius: 180
-                                                )
-                                            )
-                                            .frame(width: 146, height: 146)
-                                            .scaleEffect(breathingIn ? 1.0 : 0.64)
-                                            .shadow(color: .red.opacity(0.35), radius: 25)
-                                    }
-                                    .frame(width: 280, height: 280)
-                                    .animation(.easeInOut(duration: breathDuration), value: breathingIn)
-
-
-                                    VStack(spacing: 8) {
-                                        Text(breathingIn ? "Breathe in" : "Breathe out")
-                                            .font(.system(size: 24, weight: .medium))
-                                            .foregroundStyle(.white)
-                                            .frame(width: 220, height: 32, alignment: .center)
-                                            .multilineTextAlignment(.center)
-                                            .contentTransition(.identity)
-
-                                        Text("Take a moment for yourself")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.white.opacity(0.65))
-                                    }
-
-                                    Text("\(recentCount) attempts in the past 24 hours")
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundStyle(.white.opacity(0.65))
-                                        .padding(.top, 4)
-                                }
-                            } else {
-                                VStack(spacing: 14) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 58))
-                                        .foregroundStyle(.white)
-
-                                    Text("You chose your time.")
-                                        .font(.title3.weight(.medium))
-                                        .foregroundStyle(.white)
-
-                                    Text("Swipe up when you're ready.")
-                                        .foregroundStyle(.white.opacity(0.65))
-                                }
-                            }
-
-                            Spacer(minLength: 20)
-
-                            // Buttons appear after 3 seconds
-                            
-                            ZStack {
-                                if buttonsVisible {
-                                    VStack(spacing: 12) {
-                                        Button {
-                                            if !declined {
-                                                logEvent("declined", appID: currentAppID)
-                                                withAnimation(.spring(response: 0.45)) {
-                                                    declined = true
-                                                }
-                                                UIImpactFeedbackGenerator(style: .light)
-                                                    .impactOccurred()
-                                            }
-                                        } label: {
-                                            Text(declined ? "Done" : "Not now")
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundStyle(.black)
-                                                .frame(maxWidth: .infinity)
-                                                .padding(19)
-                                                .background(
-                                                    .white,
-                                                    in: RoundedRectangle(cornerRadius: 18)
-                                                )
-                                        }
-
-                                        Button {
-                                            continueToApp()
-                                        } label: {
-                                            Text("Continue to \(currentAppID.capitalized)")
-                                                .font(.system(size: 16, weight: .medium))
-                                                .foregroundStyle(.white.opacity(0.85))
-                                                .frame(maxWidth: .infinity)
-                                                .padding(16)
-                                                .background(
-                                                    .white.opacity(0.10),
-                                                    in: RoundedRectangle(cornerRadius: 18)
-                                                )
-                                        }
-                                    }
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                                } else {
-                                    Text("Pause. Breathe. Choose.")
-                                        .font(.footnote.weight(.medium))
-                                        .tracking(1)
-                                        .foregroundStyle(.white.opacity(0.55))
-                                }
-                            }
-                            .frame(height: 130)
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 70)
-                        }
-                        .opacity(contentVisible ? 1 : 0)
-                        .frame(
-                            maxWidth: .infinity,
-                            maxHeight: .infinity
+                        PausePanel(
+                            color: pauseColor,
+                            breathingIn: breathingIn,
+                            breathDuration: breathDuration,
+                            declined: declined,
+                            buttonsVisible: buttonsVisible,
+                            contentVisible: contentVisible,
+                            attemptsToday: recentCount,
+                            appName: currentAppID.capitalized,
+                            onNotNow: {
+                                guard !declined else { return }
+                                logEvent("declined", appID: currentAppID)
+                                withAnimation(.spring(response: 0.45)) { declined = true }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            },
+                            onContinue: continueToApp,
+                            onActivity: { showStats = true }
                         )
-                        .background {
-                            pauseColor
-                            .ignoresSafeArea()
-                        }
                         .transition(.move(edge: .bottom))
                     }
                 }
@@ -424,6 +295,9 @@ struct ContentView: View {
             .ignoresSafeArea()
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showStats) {
+            StatsView()
+        }
         .onAppear {
             // when user opens Pause directly
         }
@@ -470,6 +344,10 @@ struct ContentView: View {
 
             if newPhase == .active && wasInBackground {
                 wasInBackground = false
+            }
+            
+            if newPhase == .active {
+                // ...your prompt code
             }
         }
     }
@@ -541,7 +419,6 @@ final class HapticManager {
 
         do {
             engine = try CHHapticEngine()
-            try engine?.start()
         } catch {
             print("Haptic engine error: \(error)")
         }
